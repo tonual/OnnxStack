@@ -29,6 +29,11 @@ namespace OnnxStack.Core
                     sessionOptions.AppendExecutionProvider_DML(configuration.DeviceId);
                     sessionOptions.AppendExecutionProvider_CPU();
                     return sessionOptions;
+                case ExecutionProvider.CoreML:
+                    sessionOptions.AppendExecutionProvider_CoreML(
+                        CoreMLFlags.COREML_FLAG_ONLY_ENABLE_DEVICE_WITH_ANE
+                    );
+                    return sessionOptions;
                 case ExecutionProvider.Cpu:
                     sessionOptions.AppendExecutionProvider_CPU();
                     return sessionOptions;
