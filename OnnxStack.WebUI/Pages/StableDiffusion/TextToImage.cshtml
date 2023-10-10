@@ -1,0 +1,315 @@
+﻿@page
+@using OnnxStack.StableDiffusion.Enums;
+@model TextToImageModel
+@{
+    ViewData["Title"] = "Stable Diffusion";
+}
+
+<style>
+    textarea {
+        resize: none;
+        font-size: smaller !important
+    }
+
+    .result-info {
+        font-style: italic;
+        padding-right: 3px;
+        opacity: 0.6;
+        font-size: x-small;
+    }
+
+</style>
+@Html.AntiForgeryToken()
+
+<div class="d-flex flex-row h-100 pt-2 pb-2">
+    <div class="d-flex flex-fill">
+
+        @*  Controls *@
+        <div class="d-flex flex-column w-100 me-2 p-2 border border-1 border-dark" style="max-width:440px;overflow:hidden">
+            <h4 class="pb-0 mb-0">Text To Image</h4>
+            <small>Text to image transforms textual descriptions into visual content</small>
+            <div class="border-bottom border-dark mt-1 mb-1"></div>
+            <div class="d-flex flex-column justify-content-between h-100 mt-1" style="overflow:hidden">
+                <div class="d-flex flex-column h-100">
+                    @{
+                        await Html.RenderPartialAsync("_PromptOptionsForm", Model.Prompt);
+                        await Html.RenderPartialAsync("_SchedulerOptionsForm", Model.Options);
+                    }
+                    <div class="d-flex flex-column flex-grow-0 w-100">
+                        <div class="d-flex flex-row gap-2 justify-content-end" autocomplete="off">
+                            <button type="button" class="btn-cancel btn btn-warning w-100" disabled>Cancel</button>
+                            <button id="btn-execute" type="button" class="btn btn-success w-100">Generate</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        @*  Preview *@
+        <div class="d-flex flex-column w-100 ps-1 pt-2 border border-1 border-dark">
+
+            <ul class="nav nav-tabs" id="tabs-output" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active" id="tab-output-item" data-view="Output" data-bs-toggle="tab" data-bs-target="#tab-output-container" type="button" role="tab" aria-controls="tab-output-container" aria-selected="true">
+                        Output View
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="tab-history-item" data-view="History" data-bs-toggle="tab" data-bs-target="#tab-history-container" type="button" role="tab" aria-controls="tab-history-item" aria-selected="false">
+                        History View
+                    </button>
+                </li>
+            </ul>
+            <div class="tab-content" id="tabs-output-content">
+
+                @* Text To Image Tab *@
+                <div class="tab-pane fade show active" id="tab-output-container" role="tabpanel" aria-labelledby="tab-output-item">
+                    <div id="output-container" class="d-flex flex-fill flex-wrap justify-content-center align-content-center align-items-center mt-4">
+                    </div>
+                </div>
+
+                @* History Tab *@
+                <div class="tab-pane fade" id="tab-history-container" role="tabpanel" aria-labelledby="tab-history-item">
+                    <div id="output-container-history" class="d-flex flex-fill flex-wrap justify-content-start align-content-start align-items-start gap-3" style="overflow-y:auto">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script id="progressResultTemplate" type="text/html">
+    <div class="output-progress d-flex flex-column border border-1 border-dark p-1" style="min-width:512px;min-height:512px;">
+        <div style="overflow:hidden;text-align:center">
+            <img width="{{width}}" height="{{height}}" src="/images/placeholder.jpg"/>
+        </div>
+         <div class="d-flex flex-column pt-2">
+            <div class="progress">
+                <div class="progress-result progress-bar" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
+            </div>
+        </div>
+        <div class="d-flex flex-row gap-2 pt-2">
+            <button type="button" class="btn btn-sm btn-success w-100" disabled>Download</button>
+            <button  type="button" class="btn btn-sm btn-info w-100" disabled>Image To Image</button>
+        </div>
+    </div>
+</script>
+
+<script id="outputResultTemplate" type="text/html">
+    <div class="d-flex flex-column border border-1 border-dark p-1" >
+       <div class="d-flex align-items-center  justify-content-center" style="overflow:hidden;min-width:512px;min-height:512px;" >
+            <img id="img-result" width="{{width}}" height="{{height}}" src="{{imageUrl}}" alt="{{imageName}}" />
+        </div>
+         <div class="d-flex flex-row flex-wrap-reverse text-wrap justify-content-around pt-2">
+          <div class="d-flex flex-row align-items-center">
+              <small class="result-info">Scheduler:</small>
+              <span>{{blueprint.prompt.schedulerType}}</span>
+          </div>
+           <div class="d-flex flex-row align-items-center">
+              <small class="result-info">Steps:</small>
+              <span>{{blueprint.options.inferenceSteps}}</span>
+          </div>
+           <div class="d-flex flex-row align-items-center">
+              <small class="result-info">Guidance:</small>
+              <span>{{blueprint.options.guidanceScale}}</span>
+          </div>
+           <div class="d-flex flex-row align-items-center">
+              <small class="result-info">Seed:</small>
+              <div class="seed-host">{{blueprint.options.seed}}</div>
+          </div>
+           <div class="d-flex flex-row align-items-center">
+              <small class="result-info">Elapsed:</small>
+              <span>{{elapsed}}s</span>
+          </div>
+        </div>
+        <div class="d-flex flex-row gap-2 pt-2">
+            <div class="btn-group dropend w-100">
+                <a class="btn btn-sm btn-success w-100" href="{{imageUrl}}" download="{{imageName}}">Download</a>
+                <button type="button" class="btn btn-sm btn-success dropdown-toggle dropdown-toggle-split w-25" data-bs-toggle="dropdown" aria-expanded="false">
+                </button>
+                <ul class="dropdown-menu">
+                    <li><a class="dropdown-item" href="{{imageUrl}}" download="{{imageName}}">Download PNG</a></li>
+                    <li><a class="dropdown-item" href="{{blueprintUrl}}" download="{{blueprintName}}">Download JSON</a></li>
+                </ul>
+            </div>
+            <a class="btn btn-sm btn-info w-100" href="/StableDiffusion/ImageToImage?img={{imageName}}&width={{actualWidth}}&height={{actualHeight}}" target="_blank" disabled>Image To Image</a>
+        </div>
+    </div>
+</script>
+
+@section Scripts {
+    <script src="~/lib/jquery-validation/dist/jquery.validate.min.js"></script>
+    <script src="~/lib/jquery-validation/dist/additional-methods.min.js"></script>
+    <script src="~/lib/jquery-validation-unobtrusive/jquery.validate.unobtrusive.min.js"></script>
+    <script>
+
+        const stableDiffusionTextToImage = () => {
+
+            const LAYOUT_MAX_WIDTH = 1024;
+            const LAYOUT_MAX_HEIGHT = 512;
+            const LAYOUT_HISTORY_MAX_WIDTH = 256;
+            const LAYOUT_HISTORY_MAX_HEIGHT = 256;
+
+            let diffusionProcess;
+            const buttonClear = $("#btn-clear")
+            const buttonCancel = $(".btn-cancel");
+            const buttonExecute = $("#btn-execute");
+            const textBoxWidth = $("#Width");
+            const textBoxHeight = $("#Height");
+            const promptParameterForm = $("#PromptParameters");
+            const schedulerParameterForm = $("#SchedulerParameters");
+
+            const outputContainer = $("#output-container");
+            const outputResultTemplate = $("#outputResultTemplate").html();
+            const progressResultTemplate = $("#progressResultTemplate").html();
+
+            const outputHistoryContainer = $("#output-container-history");
+            const historyOutputTemplate = $("#historyOutputTemplate").html();
+            const historyProgressTemplate = $("#historyProgressTemplate").html();
+
+            const connection = new signalR.HubConnectionBuilder().withUrl("/StableDiffusionHub").build();
+
+            const onServerResponse = (response) => {
+                if (!response)
+                    return;
+
+                updateResultImage(response);
+                processEnd();
+            }
+
+            const onServerError = (response) => {
+                console.log("ERROR: " + response)
+            }
+
+            const onServerMessage = (response) => {
+                console.log("MESSAGE: " + response)
+            }
+
+            const onServerProgress = (response) => {
+                updateProgress(response);
+            }
+
+            const onServerCanceled = (response) => {
+                updatePlaceholderImage();
+                processEnd();
+            }
+
+            const executeDiffusion = async () => {
+                const promptParams = serializeFormToJson(promptParameterForm);
+                if (!validateForm(promptParameterForm))
+                    return;
+
+                const schedulerParams = serializeFormToJson(schedulerParameterForm);
+                if (!validateForm(schedulerParameterForm))
+                    return;
+
+                processBegin();
+                updatePlaceholderImage(true);
+                diffusionProcess = await connection
+                    .stream("ExecuteTextToImage", promptParams, schedulerParams)
+                    .subscribe({
+                        next: onServerResponse,
+                        complete: onServerResponse,
+                        error: onServerError,
+                    });
+            }
+
+            const cancelDiffusion = async () => {
+                diffusionProcess.dispose();
+            }
+
+            const updateResultImage = (response) => {
+                const width = getWidth();
+                const height = getHeight();
+
+                addOutputResult(width, height, outputResultTemplate, response);
+                outputHistoryContainer.find(".output-progress").remove();
+                addOutputHistory(width, height, historyOutputTemplate, response);
+            }
+
+            const updatePlaceholderImage = (addToHistory) => {
+                const width = getWidth();
+                const height = getHeight();
+
+                addOutputResult(width, height, progressResultTemplate)
+                outputHistoryContainer.find(".output-progress").remove();
+                if (!addToHistory)
+                    return;
+
+                addOutputHistory(width, height, historyProgressTemplate);
+            }
+
+            const addOutputResult = (width, height, template, data) => {
+                const size = getSafeSize(width, height, LAYOUT_MAX_WIDTH, LAYOUT_MAX_HEIGHT);
+                outputContainer.html(Mustache.render(template, {
+                    width: size.width,
+                    height: size.height,
+                    actualWidth: width,
+                    actualHeight: height,
+                    ...data
+                }));
+            }
+
+            const addOutputHistory = (width, height, template, data) => {
+                const size = getSafeSize(width, height, LAYOUT_HISTORY_MAX_WIDTH, LAYOUT_HISTORY_MAX_HEIGHT);
+                outputHistoryContainer.prepend(Mustache.render(template, {
+                    width: size.width,
+                    height: size.height,
+                    ...data
+                }));
+            }
+
+            const updateProgress = (response) => {
+                const increment = Math.max(100 / response.total, 1);
+                const progressPercent = Math.round(Math.min(increment * response.progress, 100), 0);
+                const progressBar = $(".progress-result");
+                progressBar.css("width", progressPercent + "%");
+                progressBar.text(progressPercent + "%");
+            }
+
+            const processBegin = () => {
+                buttonCancel.removeAttr("disabled");
+                buttonExecute.attr("disabled", "disabled");
+                promptParameterForm.find(".form-control, .slider").attr("disabled", "disabled");
+                schedulerParameterForm.find(".form-control, .slider").attr("disabled", "disabled");
+            }
+
+            const processEnd = () => {
+                buttonCancel.attr("disabled", "disabled");
+                buttonExecute.removeAttr("disabled");
+                promptParameterForm.find(".form-control, .slider").removeAttr("disabled");
+                schedulerParameterForm.find(".form-control, .slider").removeAttr("disabled");
+            }
+
+            const clearHistory = () => {
+                outputHistoryContainer.empty();
+            }
+
+            const getWidth = () => {
+                return +$("option:selected", textBoxWidth).val();
+            }
+
+            const getHeight = () => {
+                return +$("option:selected", textBoxHeight).val();
+            }
+
+            // Map UI Events/Functions
+            $(".image2image-control").hide();
+            buttonCancel.on("click", cancelDiffusion);
+            buttonClear.on("click", clearHistory);
+            buttonExecute.on("click", async () => { await executeDiffusion(); });
+            textBoxWidth.on("change", () => { updatePlaceholderImage(false); });
+            textBoxHeight.on("change", () => { updatePlaceholderImage(false); }).trigger("change");
+
+            // Map signalr functions
+            connection.on("OnError", onServerError);
+            connection.on("OnMessage", onServerMessage);
+            connection.on("OnCanceled", onServerCanceled);
+            connection.on("OnProgress", onServerProgress);
+            connection.on("OnResponse", onServerResponse);
+            connection.start();
+        }
+
+        stableDiffusionTextToImage();
+    </script>
+}

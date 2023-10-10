@@ -8,9 +8,11 @@ using OnnxStack.StableDiffusion.Config;
 using OnnxStack.StableDiffusion.Enums;
 using OnnxStack.StableDiffusion.Helpers;
 using OnnxStack.StableDiffusion.Schedulers;
+using SixLabors.ImageSharp;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 
@@ -18,20 +20,20 @@ namespace OnnxStack.StableDiffusion.Services
 {
     public sealed class SchedulerService : ISchedulerService
     {
+        private readonly IPromptService _promptService;
         private readonly OnnxStackConfig _configuration;
         private readonly IOnnxModelService _onnxModelService;
-        private readonly IPromptService _promptService;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="SchedulerService"/> class.
         /// </summary>
         /// <param name="configuration">The configuration.</param>
         /// <param name="onnxModelService">The onnx model service.</param>
-        public SchedulerService(OnnxStackConfig configuration, IOnnxModelService onnxModelService, IPromptService promptService)
+        public SchedulerService(IOnnxModelService onnxModelService, IPromptService promptService)
         {
-            _configuration = configuration;
-            _onnxModelService = onnxModelService;
             _promptService = promptService;
+            _onnxModelService = onnxModelService;
+            _configuration = _onnxModelService.Configuration;
         }
 
 
@@ -41,7 +43,7 @@ namespace OnnxStack.StableDiffusion.Services
         /// <param name="promptOptions">The options.</param>
         /// <param name="schedulerOptions">The scheduler configuration.</param>
         /// <returns></returns>
-        public async Task<DenseTensor<float>> RunAsync(PromptOptions promptOptions, SchedulerOptions schedulerOptions)
+        public async Task<DenseTensor<float>> RunAsync(PromptOptions promptOptions, SchedulerOptions schedulerOptions, Action<int, int> progress = null, CancellationToken cancellationToken = default)
         {
             // Create random seed if none was set
             schedulerOptions.Seed = schedulerOptions.Seed > 0 ? schedulerOptions.Seed : Random.Shared.Next();
@@ -63,6 +65,8 @@ namespace OnnxStack.StableDiffusion.Services
                 var step = 0;
                 foreach (var timestep in timesteps)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
+
                     // Create input tensor.
                     var inputTensor = scheduler.ScaleInput(latentSample.Duplicate(schedulerOptions.GetScaledDimension(2)), timestep);
 
@@ -90,6 +94,7 @@ namespace OnnxStack.StableDiffusion.Services
                     }
 
                     Console.WriteLine($"Step: {++step}/{timesteps.Count}");
+                    progress?.Invoke(step, timesteps.Count);
                 }
 
                 // Decode Latents
@@ -122,14 +127,14 @@ namespace OnnxStack.StableDiffusion.Services
                 return scheduler.CreateRandomSample(options.GetScaledDimension(), scheduler.InitNoiseSigma);
 
             // Image input, decode, add noise, return as latent 0
-            var imageTensor = ImageHelpers.TensorFromImage(prompt.InputImage, options.Width, options.Height);
+            var imageTensor = prompt.InputImage.ToDenseTensor(options.Width, options.Height);
             var inputParameters = CreateInputParameters(NamedOnnxValue.CreateFromTensor("sample", imageTensor));
             using (var inferResult = _onnxModelService.RunInference(OnnxModelType.VaeEncoder, inputParameters))
             {
                 var sample = inferResult.FirstElementAs<DenseTensor<float>>();
                 var noisySample = sample
                     .AddTensors(scheduler.CreateRandomSample(sample.Dimensions, options.InitialNoiseLevel))
-                    .MultipleTensorByFloat(Constants.ModelScaleFactor);
+                    .MultipleTensorByFloat(_configuration.ScaleFactor);
                 var noise = scheduler.CreateRandomSample(sample.Dimensions);
                 return scheduler.AddNoise(noisySample, noise, timesteps);
             }
@@ -146,7 +151,7 @@ namespace OnnxStack.StableDiffusion.Services
         {
             // Scale and decode the image latents with vae.
             // latents = 1 / 0.18215 * latents
-            latents = latents.MultipleTensorByFloat(1.0f / Constants.ModelScaleFactor);
+            latents = latents.MultipleTensorByFloat(1.0f / _configuration.ScaleFactor);
 
             var inputParameters = CreateInputParameters(NamedOnnxValue.CreateFromTensor("latent_sample", latents));
 
@@ -154,7 +159,7 @@ namespace OnnxStack.StableDiffusion.Services
             using (var inferResult = await _onnxModelService.RunInferenceAsync(OnnxModelType.VaeDecoder, inputParameters))
             {
                 var resultTensor = inferResult.FirstElementAs<DenseTensor<float>>();
-                if (_configuration.IsSafetyModelEnabled)
+                if (await _onnxModelService.IsEnabledAsync(OnnxModelType.SafetyChecker))
                 {
                     // Check if image contains NSFW content, 
                     if (!await IsImageSafe(options, resultTensor))
@@ -185,7 +190,7 @@ namespace OnnxStack.StableDiffusion.Services
                 NamedOnnxValue.CreateFromTensor("images", inputImagesTensor));
 
             // Run session and send the input data in to get inference output. 
-            using (var inferResult = await _onnxModelService.RunInferenceAsync(OnnxModelType.SafetyModel, inputParameters))
+            using (var inferResult = await _onnxModelService.RunInferenceAsync(OnnxModelType.SafetyChecker, inputParameters))
             {
                 var result = inferResult.LastElementAs<IEnumerable<bool>>();
                 return !result.First();
@@ -201,7 +206,7 @@ namespace OnnxStack.StableDiffusion.Services
         private static DenseTensor<float> ClipImageFeatureExtractor(SchedulerOptions options, DenseTensor<float> imageTensor)
         {
             //convert tensor result to image
-            using (var image = ImageHelpers.TensorToImage(imageTensor, options.Width, options.Height))
+            using (var image = imageTensor.ToImage())
             {
                 // Resize image
                 ImageHelpers.Resize(image, 224, 224);
@@ -210,16 +215,19 @@ namespace OnnxStack.StableDiffusion.Services
                 var input = new DenseTensor<float>(new[] { 1, 3, 224, 224 });
                 var mean = new[] { 0.485f, 0.456f, 0.406f };
                 var stddev = new[] { 0.229f, 0.224f, 0.225f };
-                for (int y = 0; y < image.Height; y++)
+                image.ProcessPixelRows(img =>
                 {
-                    var pixelSpan = image.GetPixelRowSpan(y);
-                    for (int x = 0; x < image.Width; x++)
+                    for (int y = 0; y < image.Height; y++)
                     {
-                        input[0, 0, y, x] = (pixelSpan[x].R / 255f - mean[0]) / stddev[0];
-                        input[0, 1, y, x] = (pixelSpan[x].G / 255f - mean[1]) / stddev[1];
-                        input[0, 2, y, x] = (pixelSpan[x].B / 255f - mean[2]) / stddev[2];
+                        var pixelSpan = img.GetRowSpan(y);
+                        for (int x = 0; x < image.Width; x++)
+                        {
+                            input[0, 0, y, x] = (pixelSpan[x].R / 255f - mean[0]) / stddev[0];
+                            input[0, 1, y, x] = (pixelSpan[x].G / 255f - mean[1]) / stddev[1];
+                            input[0, 2, y, x] = (pixelSpan[x].B / 255f - mean[2]) / stddev[2];
+                        }
                     }
-                }
+                });
                 return input;
             }
         }
@@ -235,9 +243,9 @@ namespace OnnxStack.StableDiffusion.Services
         {
             return prompt.SchedulerType switch
             {
-                SchedulerType.LMSScheduler => new LMSScheduler(options),
-                SchedulerType.EulerAncestralScheduler => new EulerAncestralScheduler(options),
-                SchedulerType.DDPMScheduler => new DDPMScheduler(options),
+                SchedulerType.LMS => new LMSScheduler(options),
+                SchedulerType.EulerAncestral => new EulerAncestralScheduler(options),
+                SchedulerType.DDPM => new DDPMScheduler(options),
                 _ => default
             };
         }
