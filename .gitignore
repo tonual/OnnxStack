@@ -343,3 +343,5 @@ test/TensorFlowNET.Examples/mnist
 # docs
 site/
 
+Assets/.DS_Store
+.DS_Store
