@@ -125,8 +125,7 @@ namespace OnnxStack.Web.Hubs
 
             //3. Generate blueprint
             var inputImageLink = await _fileService.CreateOutputUrl(inputImage, false);
-            var outputImageLink = await _fileService.CreateOutputUrl(outputImage, false);
-            promptOptions.InputImage = new InputImage(inputOriginaUrl);
+            var outputImageLink = await _fileService.CreateOutputUrl(outputImage, false);            
             var blueprint = new ImageBlueprint(promptOptions, schedulerOptions, outputImageLink, inputImageLink);
             var bluprintFile = await _fileService.SaveBlueprintFile(blueprint, outputBlueprint);
             if (bluprintFile is null)
