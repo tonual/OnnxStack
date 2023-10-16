@@ -9,8 +9,6 @@
 
   <ItemGroup>
     <PackageReference Include="AspNetCore.Unobtrusive.Ajax" Version="2.0.0" />
-   <!-- <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.16.0" />		
-		<PackageReference Include="Microsoft.ML.OnnxTransformer" Version="2.0.1" /> -->
     <PackageReference Include="System.Linq.Async" Version="6.0.1" />
   </ItemGroup>
 
@@ -19,7 +17,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Folder Include="wwwroot\images\Results\" />
+    <Folder Include="wwwroot\images\results\" />
   </ItemGroup>
 
 </Project>
