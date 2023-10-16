@@ -1,8 +1,8 @@
 ﻿@page
 @using OnnxStack.StableDiffusion.Enums;
-@model ImageToImageModel
+@model ImageInpaintModel
 @{
-    ViewData["Title"] = "Image To Image";
+    ViewData["Title"] = "Image Inpaint";
 }
 
 @Html.AntiForgeryToken()
@@ -14,8 +14,8 @@
         @Html.HiddenFor(m => m.InitialImage.Width)
         @Html.HiddenFor(m => m.InitialImage.Height)
         <div class="d-flex flex-column w-100 me-2 p-2 border border-1 border-dark" style="max-width:440px;overflow:hidden">
-            <h4 class="pb-0 mb-0">Image To Image</h4>
-            <small>Transforms one image into another, preserving visual quality and structure.</small>
+            <h4 class="pb-0 mb-0">Image Inpainting</h4>
+            <small>Inpainting reconstructs missing or damaged image areas using a drawn mask.</small>
             <div class="border-bottom border-dark mt-1 mb-1"></div>
             <div class="d-flex flex-column justify-content-between h-100 mt-1" style="overflow:hidden">
                 <div class="d-flex flex-column h-100">
@@ -129,8 +129,8 @@
                 </ul>
             </div>
             <div class="d-flex gap-2  w-100">
-                <button id="button-transfer" type="button" class="btn btn-sm btn-info w-100">Image To Image</button>
-                <a class="btn btn-sm btn-info w-100" href="/StableDiffusion/ImageInpaint?img={{imageName}}&width={{actualWidth}}&height={{actualHeight}}" target="_blank" disabled>Image Inpaint</a>
+                <button id="button-transfer" type="button" class="btn btn-sm btn-info w-100">Image Inpaint</button>
+                <a class="btn btn-sm btn-info w-100" href="/StableDiffusion/ImageToImage?img={{imageName}}&width={{actualWidth}}&height={{actualHeight}}" target="_blank" disabled>Image To Image</a>
             </div>
         </div>
     </div>
@@ -140,6 +140,7 @@
 <script id="inputResultTemplate" type="text/html">
     <div class="d-flex flex-column border border-1 border-dark p-1" >
        <div class="d-flex align-items-center  justify-content-center" style="overflow:hidden;min-width:512px;min-height:256px;" >
+            <canvas id="img-mask" width="{{width}}" height="{{height}}" style="position:absolute;"></canvas>
             <img id="img-input" width="{{width}}" height="{{height}}" src="{{imageUrl}}"  onerror="this.src='/images/placeholder.jpg';this.onerror='';"/>
         </div>
          <div class="d-flex flex-row flex-wrap-reverse text-wrap justify-content-around pt-2">
@@ -149,7 +150,24 @@
           </div>
         </div>
         <div class="d-flex flex-row gap-2 pt-2">
-            <button id="button-upload" type="button" class="btn btn-sm btn-success w-100" >Upload</button>
+            <div class="d-flex w-100">
+                 <button id="button-upload" type="button" class="btn btn-sm btn-success w-100" >Upload</button>
+            </div>
+            <div class="d-flex gap-1  w-100" >
+                <button id="btn-mask-brush" class="mask-control btn btn-sm btn-outline-success" title="Paint Brush" onclick="this.blur();" disabled>
+                    <i class="fa fa-paint-brush"></i>
+                </button>
+                <div class="d-flex flex-row slider-container align-items-center gap-1">
+                    <input id="slider-mask-brush" type="range" class="mask-control slider" min="1" max="30" step="1" value="{{mask_size}}"  disabled/>
+                    <small>{{mask_size}}</small>
+                </div>
+                <button id="btn-mask-eraser" class="mask-control btn btn-sm btn-outline-info" title="Eraser" onclick="this.blur();" disabled>
+                     <i class="fa fa-eraser"></i>
+                </button>
+                 <button id="btn-mask-clear" class="mask-control btn btn-sm btn-outline-info" title="Clear mask" onclick="this.blur();" disabled>
+                     <i class="fa fa-trash"></i>
+                </button>
+            </div>
         </div>
     </div>
 </script>
@@ -158,8 +176,8 @@
     <script src="~/lib/jquery-validation/dist/jquery.validate.min.js"></script>
     <script src="~/lib/jquery-validation/dist/additional-methods.min.js"></script>
     <script src="~/lib/jquery-validation-unobtrusive/jquery.validate.unobtrusive.min.js"></script>
-    <script src="~/js/stablediffusionimagetoimage.js"></script>
+    <script src="~/js/stablediffusionimageinpaint.js"></script>
     <script>
-        stableDiffusionImageToImage();
+        stableDiffusionImageInpaint();
     </script>
 }

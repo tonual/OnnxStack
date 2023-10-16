@@ -4,6 +4,26 @@
 
 ## Getting Started
 
+OnnxStack.StableDiffusion can be found via the nuget package manager, download and install it.
+```
+PM> Install-Package OnnxStack.StableDiffusion
+```
+
+### Microsoft.ML.OnnxRuntime
+Depending on the devices you have and the platform you are running on, you will want to install the Microsoft.ML.OnnxRuntime package that best suits your needs.
+
+### CPU-GPU via Microsoft Drirect ML
+```
+PM> Install-Package Microsoft.ML.OnnxRuntime.DirectML
+```
+
+### GPU support for both NVIDIA and AMD?
+```
+PM> Install-Package Microsoft.ML.OnnxRuntime.Gpu
+```
+
+
+
 ### .NET Core Registration
 
 You can easily integrate `OnnxStack.StableDiffusion` into your application services layer. This registration process sets up the necessary services and loads the `appsettings.json` configuration.
@@ -18,11 +38,10 @@ builder.Services.AddOnnxStackStableDiffusion();
 
 ## .NET Console Application Example
 
-Required Nuget Packages
+Required Nuget Packages for example
 ```nuget
 Microsoft.Extensions.Hosting
 Microsoft.Extensions.Logging
-Microsoft.ML.OnnxRuntime.DirectML
 ```
 
 ```csharp
@@ -81,7 +100,10 @@ internal class AppService : IHostedService
                Prompt = prompt,
                NegativePrompt = negativePrompt,
                SchedulerType = SchedulerType.LMSScheduler,
-               InputImage = inputImageFile
+               InputImage = new InputImage
+               {
+                  ImagePath = inputImageFile
+               }
             };
 
             var schedulerOptions = new SchedulerOptions
@@ -96,9 +118,10 @@ internal class AppService : IHostedService
 
             System.Console.WriteLine("Generating Image...");
             var outputFilename = Path.Combine(_outputDirectory, $"{schedulerOptions.Seed}_{promptOptions.SchedulerType}.png");
-            var result = await _stableDiffusionService.TextToImageFile(promptOptions, schedulerOptions, outputFilename);
+            var result = await _stableDiffusionService.GenerateAsImageAsync(prompt, options);
             if (result is not null)
-            {
+            { 
+               await result.SaveAsPngAsync(outputFilename);
                System.Console.WriteLine($"Image Created, FilePath: {outputFilename}");
             }
       }
@@ -107,6 +130,70 @@ internal class AppService : IHostedService
    public Task StopAsync(CancellationToken cancellationToken)
    {
       return Task.CompletedTask;
+   }
+}
+```
+
+
+## Configuration
+The `appsettings.json` is the easiest option for configuring model sets. Below is an example of `Stable Diffusion 1.5`.
+The example adds the necessary paths to each model file required for Stable Diffusion, as well as any model-specific configurations. 
+Each model can be assigned to its own device, which is handy if you have only a small GPU. This way, you can offload only what you need. There are limitations depending on the version of the `Microsoft.ML.OnnxRuntime` package you are using, but in most cases, you can split the load between CPU and GPU.
+
+```json
+{
+   "Logging": {
+      "LogLevel": {
+         "Default": "Information",
+         "Microsoft.AspNetCore": "Warning"
+      }
+   },
+
+   "OnnxStackConfig": {
+      "Name": "StableDiffusion 1.5",
+      "PadTokenId": 49407,
+      "BlankTokenId": 49407,
+      "InputTokenLimit": 512,
+      "TokenizerLimit": 77,
+      "EmbeddingsLength": 768,
+      "ScaleFactor": 0.18215,
+      "ModelConfigurations": [{
+            "Type": "Unet",
+            "DeviceId": 0,
+            "ExecutionProvider": "DirectML",
+            "OnnxModelPath": "D:\\Repositories\\stable-diffusion-v1-5\\unet\\model.onnx"
+         },
+         {
+            "Type": "Tokenizer",
+            "DeviceId": 0,
+            "ExecutionProvider": "Cpu",
+            "OnnxModelPath": "D:\\Repositories\\stable-diffusion-v1-5\\cliptokenizer.onnx"
+         },
+         {
+            "Type": "TextEncoder",
+            "DeviceId": 0,
+            "ExecutionProvider": "Cpu",
+            "OnnxModelPath": "D:\\Repositories\\stable-diffusion-v1-5\\text_encoder\\model.onnx"
+         },
+         {
+            "Type": "VaeEncoder",
+            "DeviceId": 0,
+            "ExecutionProvider": "Cpu",
+            "OnnxModelPath": "D:\\Repositories\\stable-diffusion-v1-5\\vae_encoder\\model.onnx"
+         },
+         {
+            "Type": "VaeDecoder",
+            "DeviceId": 0,
+            "ExecutionProvider": "Cpu",
+            "OnnxModelPath": "D:\\Repositories\\stable-diffusion-v1-5\\vae_decoder\\model.onnx"
+         },
+         {
+            "Type": "SafetyChecker",
+            "IsDisabled": true,
+            "DeviceId": 0,
+            "ExecutionProvider": "Cpu",
+            "OnnxModelPath": "D:\\Repositories\\stable-diffusion-v1-5\\safety_checker\\model.onnx"
+         }]
    }
 }
 ```

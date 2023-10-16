@@ -17,13 +17,13 @@ namespace OnnxStack.StableDiffusion.Models
         /// Initializes a new instance of the <see cref="InputImage"/> class.
         /// </summary>
         /// <param name="image">The image.</param>
-        public InputImage(Image<Rgb24> image) => Image = image;
+        public InputImage(Image<Rgba32> image) => Image = image;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="InputImage"/> class.
         /// </summary>
-        /// <param name="imagePath">The image path.</param>
-        public InputImage(string imagePath) => ImagePath = imagePath;
+        /// <param name="imageBase64">The image in base64 format.</param>
+        public InputImage(string imageBase64) => ImageBase64 = imageBase64;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="InputImage"/> class.
@@ -47,13 +47,13 @@ namespace OnnxStack.StableDiffusion.Models
         /// Gets the image.
         /// </summary>
         [JsonIgnore]
-        public Image<Rgb24> Image { get; set; }
+        public Image<Rgba32> Image { get; set; }
 
 
         /// <summary>
-        /// Gets the image path.
+        /// Gets the image base64 string.
         /// </summary>
-        public string ImagePath { get; set; }
+        public string ImageBase64 { get; set; }
 
 
         /// <summary>
@@ -85,7 +85,7 @@ namespace OnnxStack.StableDiffusion.Models
         /// </value>
         [JsonIgnore]
         public bool HasImage => Image != null
-            || !string.IsNullOrEmpty(ImagePath)
+            || !string.IsNullOrEmpty(ImageBase64)
             || ImageBytes != null
             || ImageStream != null
             || ImageTensor != null;

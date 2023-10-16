@@ -1,9 +1,31 @@
 ﻿using OnnxStack.StableDiffusion.Config;
+using OnnxStack.StableDiffusion.Enums;
 
 namespace OnnxStack.WebUI.Models
 {
-    public record ImageBlueprint(PromptOptions Prompt, SchedulerOptions Options, string OutputImageUrl, string InputImageUrl = null)
+    public record ImageBlueprint
     {
-        public DateTime Timestamp { get; } = DateTime.UtcNow;
+        public ImageBlueprint(PromptOptions prompt, SchedulerOptions options, string outputImageUrl, string inputImageUrl = null, string maskImageUrl = null)
+        {
+            Timestamp = DateTime.Now;
+            SchedulerOptions = options;
+            MaskImageUrl = maskImageUrl;
+            InputImageUrl = inputImageUrl;
+            OutputImageUrl = outputImageUrl;
+            Prompt = prompt.Prompt;
+            NegativePrompt = prompt.NegativePrompt;
+            SchedulerType = prompt.SchedulerType;
+            ProcessType = prompt.ProcessType;
+        }
+
+        public DateTime Timestamp { get; }
+        public string Prompt { get; }
+        public string NegativePrompt { get; }
+        public SchedulerType SchedulerType { get; }
+        public ProcessType ProcessType { get; }
+        public string MaskImageUrl { get; }
+        public string InputImageUrl { get; }
+        public string OutputImageUrl { get; }
+        public SchedulerOptions SchedulerOptions { get; }
     }
 }
