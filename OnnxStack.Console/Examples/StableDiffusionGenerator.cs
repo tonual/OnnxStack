@@ -1,4 +1,5 @@
-﻿using OnnxStack.StableDiffusion;
+using System.Collections.ObjectModel;
+using OnnxStack.StableDiffusion;
 using OnnxStack.StableDiffusion.Common;
 using OnnxStack.StableDiffusion.Config;
 using SixLabors.ImageSharp;
