@@ -24,9 +24,9 @@ namespace OnnxStack.Core.Config
         /// </summary>
         /// <typeparam name="T">The custom IConfigSection class type, NOTE: json section name MUST match class name</typeparam>
         /// <returns>The deserialized custom configuration object</returns>
-        public static T LoadConfiguration<T>(params JsonConverter[] converters) where T : class, IConfigSection
+        public static T LoadConfiguration<T>(string sectionName = null, params JsonConverter[] converters) where T : class, IConfigSection
         {
-            return LoadConfigurationSection<T>(converters);
+            return LoadConfigurationSection<T>(sectionName, converters);
         }
 
 
@@ -37,13 +37,14 @@ namespace OnnxStack.Core.Config
         /// <param name="converters">The converters.</param>
         /// <returns></returns>
         /// <exception cref="System.Exception">Failed to parse json element</exception>
-        private static T LoadConfigurationSection<T>(params JsonConverter[] converters) where T : class, IConfigSection
+        private static T LoadConfigurationSection<T>(string sectionName, params JsonConverter[] converters) where T : class, IConfigSection
         {
+            var name = sectionName ?? typeof(T).Name;
             var serializerOptions = GetSerializerOptions(converters);
             var jsonDocument = GetJsonDocument(serializerOptions);
-            var configElement = jsonDocument.RootElement.GetProperty(typeof(T).Name);
+            var configElement = jsonDocument.RootElement.GetProperty(name);
             var configuration = configElement.Deserialize<T>(serializerOptions)
-                ?? throw new Exception($"Failed to parse {typeof(T).Name} json element");
+                ?? throw new Exception($"Failed to parse {name} json element");
             configuration.Initialize();
             return configuration;
         }
@@ -92,7 +93,12 @@ namespace OnnxStack.Core.Config
             SaveConfiguration<OnnxStackConfig>(configuration);
         }
 
-        public static void SaveConfiguration<T>(T configuration)
+        public static void SaveConfiguration<T>(T configuration) where T : class, IConfigSection
+        {
+            SaveConfiguration<T>(typeof(T).Name, configuration);
+        }
+
+        public static void SaveConfiguration<T>(string sectionName, T configuration) where T : class, IConfigSection
         {
           
             string appsettingStreamFile = GetAppSettingsFile();
@@ -103,7 +109,7 @@ namespace OnnxStack.Core.Config
                 appSettings = JsonSerializer.Deserialize<Dictionary<string, object>>(appsettingReadStream, GetSerializerOptions());
 
             // Set Object
-            appSettings[typeof(T).Name] = configuration;
+            appSettings[sectionName] = configuration;
 
             // Write out file
             var serializerOptions = GetSerializerOptions();

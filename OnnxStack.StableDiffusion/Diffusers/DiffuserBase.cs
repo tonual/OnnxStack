@@ -1,15 +1,18 @@
-﻿using Microsoft.ML.OnnxRuntime;
+﻿using Microsoft.Extensions.Logging;
+using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
+using OnnxStack.Core;
 using OnnxStack.Core.Config;
 using OnnxStack.Core.Services;
 using OnnxStack.StableDiffusion.Common;
 using OnnxStack.StableDiffusion.Config;
 using OnnxStack.StableDiffusion.Enums;
 using OnnxStack.StableDiffusion.Helpers;
-using OnnxStack.StableDiffusion.Schedulers;
+using OnnxStack.StableDiffusion.Models;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -18,40 +21,73 @@ namespace OnnxStack.StableDiffusion.Diffusers
     public abstract class DiffuserBase : IDiffuser
     {
         protected readonly IPromptService _promptService;
-        protected readonly OnnxStackConfig _configuration;
         protected readonly IOnnxModelService _onnxModelService;
+        protected readonly ILogger<DiffuserBase> _logger;
+
 
         /// <summary>
         /// Initializes a new instance of the <see cref="DiffuserBase"/> class.
         /// </summary>
-        /// <param name="configuration">The configuration.</param>
         /// <param name="onnxModelService">The onnx model service.</param>
-        public DiffuserBase(IOnnxModelService onnxModelService, IPromptService promptService)
+        /// <param name="promptService">The prompt service.</param>
+        /// <param name="logger">The logger.</param>
+        public DiffuserBase(IOnnxModelService onnxModelService, IPromptService promptService, ILogger<DiffuserBase> logger)
         {
+            _logger = logger;
             _promptService = promptService;
             _onnxModelService = onnxModelService;
-            _configuration = _onnxModelService.Configuration;
         }
 
+        /// <summary>
+        /// Gets the type of the diffuser.
+        /// </summary>
+        public abstract DiffuserType DiffuserType { get; }
+
+        /// <summary>
+        /// Gets the type of the pipeline.
+        /// </summary>
+        public abstract DiffuserPipelineType PipelineType { get; }
+
+        /// <summary>
+        /// Gets the scheduler.
+        /// </summary>
+        /// <param name="options">The options.</param>
+        /// <returns></returns>
+        protected abstract IScheduler GetScheduler(SchedulerOptions options);
 
         /// <summary>
         /// Gets the timesteps.
         /// </summary>
-        /// <param name="prompt">The prompt.</param>
         /// <param name="options">The options.</param>
         /// <param name="scheduler">The scheduler.</param>
         /// <returns></returns>
-        protected abstract IReadOnlyList<int> GetTimesteps(PromptOptions prompt, SchedulerOptions options, IScheduler scheduler);
+        protected abstract IReadOnlyList<int> GetTimesteps(SchedulerOptions options, IScheduler scheduler);
+
 
         /// <summary>
-        /// Prepares the latents.
+        /// Prepares the input latents.
         /// </summary>
+        /// <param name="model">The model.</param>
         /// <param name="prompt">The prompt.</param>
         /// <param name="options">The options.</param>
         /// <param name="scheduler">The scheduler.</param>
         /// <param name="timesteps">The timesteps.</param>
         /// <returns></returns>
-        protected abstract DenseTensor<float> PrepareLatents(PromptOptions prompt, SchedulerOptions options, IScheduler scheduler, IReadOnlyList<int> timesteps);
+        protected abstract Task<DenseTensor<float>> PrepareLatents(IModelOptions model, PromptOptions prompt, SchedulerOptions options, IScheduler scheduler, IReadOnlyList<int> timesteps);
+
+
+        /// <summary>
+        /// Called on each Scheduler step.
+        /// </summary>
+        /// <param name="modelOptions">The model options.</param>
+        /// <param name="promptOptions">The prompt options.</param>
+        /// <param name="schedulerOptions">The scheduler options.</param>
+        /// <param name="promptEmbeddings">The prompt embeddings.</param>
+        /// <param name="performGuidance">if set to <c>true</c> [perform guidance].</param>
+        /// <param name="progressCallback">The progress callback.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns></returns>
+        protected abstract Task<DenseTensor<float>> SchedulerStep(IModelOptions modelOptions, PromptOptions promptOptions, SchedulerOptions schedulerOptions, DenseTensor<float> promptEmbeddings, bool performGuidance, Action<int, int> progressCallback = null, CancellationToken cancellationToken = default);
 
 
         /// <summary>
@@ -62,182 +98,175 @@ namespace OnnxStack.StableDiffusion.Diffusers
         /// <param name="progress">The progress.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns></returns>
-        public virtual async Task<DenseTensor<float>> DiffuseAsync(PromptOptions promptOptions, SchedulerOptions schedulerOptions, Action<int, int> progress = null, CancellationToken cancellationToken = default)
+        public virtual async Task<DenseTensor<float>> DiffuseAsync(IModelOptions modelOptions, PromptOptions promptOptions, SchedulerOptions schedulerOptions, Action<int, int> progressCallback = null, CancellationToken cancellationToken = default)
         {
             // Create random seed if none was set
             schedulerOptions.Seed = schedulerOptions.Seed > 0 ? schedulerOptions.Seed : Random.Shared.Next();
-     
-            // Get Scheduler
-            using (var scheduler = GetScheduler(promptOptions, schedulerOptions))
-            {
-                // Process prompts
-                var promptEmbeddings = await _promptService.CreatePromptAsync(promptOptions.Prompt, promptOptions.NegativePrompt);
 
-                // Get timesteps
-                var timesteps = GetTimesteps(promptOptions, schedulerOptions, scheduler);
+            var diffuseTime = _logger?.LogBegin("Begin...");
+            _logger?.Log($"Model: {modelOptions.Name}, Pipeline: {modelOptions.PipelineType}, Diffuser: {promptOptions.DiffuserType}, Scheduler: {schedulerOptions.SchedulerType}");
 
-                // Create latent sample
-                var latents = PrepareLatents(promptOptions, schedulerOptions, scheduler, timesteps);
+            // Check guidance
+            var performGuidance = ShouldPerformGuidance(schedulerOptions);
 
-                // Loop though the timesteps
-                var step = 0;
-                foreach (var timestep in timesteps)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
+            // Process prompts
+            var promptEmbeddings = await _promptService.CreatePromptAsync(modelOptions, promptOptions, performGuidance);
 
-                    // Create input tensor.
-                    var inputTensor = scheduler.ScaleInput(latents.Duplicate(schedulerOptions.GetScaledDimension(2)), timestep);
+            // Run Scheduler steps
+            var schedulerResult = await SchedulerStep(modelOptions, promptOptions, schedulerOptions, promptEmbeddings, performGuidance, progressCallback, cancellationToken);
 
-                    // Create Input Parameters
-                    var inputNames = _onnxModelService.GetInputNames(OnnxModelType.Unet);
-                    var inputParameters = CreateInputParameters(
-                         NamedOnnxValue.CreateFromTensor(inputNames[0], inputTensor),
-                         NamedOnnxValue.CreateFromTensor(inputNames[1], new DenseTensor<long>(new long[] { timestep }, new int[] { 1 })),
-                         NamedOnnxValue.CreateFromTensor(inputNames[2], promptEmbeddings));
+            _logger?.LogEnd($"End", diffuseTime);
 
-                    // Run Inference
-                    using (var inferResult = await _onnxModelService.RunInferenceAsync(OnnxModelType.Unet, inputParameters))
-                    {
-                        var noisePred = inferResult.FirstElementAs<DenseTensor<float>>();
-
-                        // Perform guidance
-                        if (schedulerOptions.GuidanceScale > 1.0f)
-                        {
-                            var (noisePredUncond, noisePredText) = noisePred.SplitTensor(schedulerOptions.GetScaledDimension());
-                            noisePred = noisePredUncond.PerformGuidance(noisePredText, schedulerOptions.GuidanceScale);
-                        }
-
-                        // Scheduler Step
-                        latents = scheduler.Step(noisePred, timestep, latents);
-                    }
-
-                    progress?.Invoke(++step, timesteps.Count);
-                }
-
-                // Decode Latents
-                return await DecodeLatents(schedulerOptions, latents);
-            }
+            return schedulerResult;
         }
+ 
+
+        /// <summary>
+        /// Runs the stable diffusion batch loop
+        /// </summary>
+        /// <param name="modelOptions">The model options.</param>
+        /// <param name="promptOptions">The prompt options.</param>
+        /// <param name="schedulerOptions">The scheduler options.</param>
+        /// <param name="batchOptions">The batch options.</param>
+        /// <param name="progressCallback">The progress callback.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns></returns>
+        /// <exception cref="System.NotImplementedException"></exception>
+        public virtual async IAsyncEnumerable<BatchResult> DiffuseBatchAsync(IModelOptions modelOptions, PromptOptions promptOptions, SchedulerOptions schedulerOptions, BatchOptions batchOptions, Action<int, int, int, int> progressCallback = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            // Create random seed if none was set
+            schedulerOptions.Seed = schedulerOptions.Seed > 0 ? schedulerOptions.Seed : Random.Shared.Next();
+
+            var diffuseBatchTime = _logger?.LogBegin("Begin...");
+            _logger?.Log($"Model: {modelOptions.Name}, Pipeline: {modelOptions.PipelineType}, Diffuser: {promptOptions.DiffuserType}, Scheduler: {schedulerOptions.SchedulerType}");
+
+            // Check guidance
+            var performGuidance = ShouldPerformGuidance(schedulerOptions);
+
+            // Process prompts
+            var promptEmbeddings = await _promptService.CreatePromptAsync(modelOptions, promptOptions, performGuidance);
+
+            // Generate batch options
+            var batchSchedulerOptions = BatchGenerator.GenerateBatch(modelOptions, batchOptions, schedulerOptions);
+
+            var batchIndex = 1;
+            var schedulerCallback = (int step, int steps) => progressCallback?.Invoke(batchIndex, batchSchedulerOptions.Count, step, steps);
+            foreach (var batchSchedulerOption in batchSchedulerOptions)
+            {
+                yield return new BatchResult(batchSchedulerOption, await SchedulerStep(modelOptions, promptOptions, batchSchedulerOption, promptEmbeddings, performGuidance, schedulerCallback, cancellationToken));
+                batchIndex++;
+            }
+
+            _logger?.LogEnd($"End", diffuseBatchTime);
+        }
+
+
+        /// <summary>
+        /// Chech if we should run guidance.
+        /// </summary>
+        /// <param name="schedulerOptions">The scheduler options.</param>
+        /// <returns></returns>
+        protected virtual bool ShouldPerformGuidance(SchedulerOptions schedulerOptions)
+        {
+            return schedulerOptions.GuidanceScale > 1f;
+        }
+
+
+        /// <summary>
+        /// Performs classifier free guidance
+        /// </summary>
+        /// <param name="noisePredUncond">The noise pred.</param>
+        /// <param name="noisePredText">The noise pred text.</param>
+        /// <param name="guidanceScale">The guidance scale.</param>
+        /// <returns></returns>
+        protected virtual DenseTensor<float> PerformGuidance(DenseTensor<float> noisePrediction, float guidanceScale)
+        {
+            // Split Prompt and Negative Prompt predictions
+            var dimensions = noisePrediction.Dimensions.ToArray();
+            dimensions[0] /= 2;
+
+            var length = (int)noisePrediction.Length / 2;
+            var noisePredCond = new DenseTensor<float>(noisePrediction.Buffer[length..], dimensions);
+            var noisePredUncond = new DenseTensor<float>(noisePrediction.Buffer[..length], dimensions);
+            return noisePredUncond
+                .Add(noisePredCond
+                .Subtract(noisePredUncond)
+                .MultiplyBy(guidanceScale));
+        }
+
 
         /// <summary>
         /// Decodes the latents.
         /// </summary>
+        /// <param name="model">The model.</param>
+        /// <param name="prompt">The prompt.</param>
         /// <param name="options">The options.</param>
         /// <param name="latents">The latents.</param>
         /// <returns></returns>
-        protected async Task<DenseTensor<float>> DecodeLatents(SchedulerOptions options, DenseTensor<float> latents)
+        protected virtual async Task<DenseTensor<float>> DecodeLatents(IModelOptions model, PromptOptions prompt, SchedulerOptions options, DenseTensor<float> latents)
         {
+            var timestamp = _logger?.LogBegin("Begin...");
+
             // Scale and decode the image latents with vae.
-            // latents = 1 / 0.18215 * latents
-            latents = latents.MultipleTensorByFloat(1.0f / _configuration.ScaleFactor);
+            latents = latents.MultiplyBy(1.0f / model.ScaleFactor);
 
-            var inputNames = _onnxModelService.GetInputNames(OnnxModelType.VaeDecoder);
-            var inputParameters = CreateInputParameters(NamedOnnxValue.CreateFromTensor(inputNames[0], latents));
-
-            // Run inference.
-            using (var inferResult = await _onnxModelService.RunInferenceAsync(OnnxModelType.VaeDecoder, inputParameters))
+            var images = prompt.BatchCount > 1
+                ? latents.Split(prompt.BatchCount)
+                : new[] { latents };
+            var imageTensors = new List<DenseTensor<float>>();
+            foreach (var image in images)
             {
-                var resultTensor = inferResult.FirstElementAs<DenseTensor<float>>();
-                if (await _onnxModelService.IsEnabledAsync(OnnxModelType.SafetyChecker))
+                var inputNames = _onnxModelService.GetInputNames(model, OnnxModelType.VaeDecoder);
+                var outputNames = _onnxModelService.GetOutputNames(model, OnnxModelType.VaeDecoder);
+
+                var outputDim = new[] { 1, 3, options.Height, options.Width };
+                var outputBuffer = new DenseTensor<float>(outputDim);
+                using (var inputTensorValue = image.ToOrtValue())
+                using (var outputTensorValue = outputBuffer.ToOrtValue())
                 {
-                    // Check if image contains NSFW content, 
-                    if (!await IsImageSafe(options, resultTensor))
-                        return resultTensor.CloneEmpty().ToDenseTensor(); //TODO: blank image?, exception?, null?
-                }
-                return resultTensor.ToDenseTensor();
-            }
-        }
-
-
-        /// <summary>
-        /// Determines whether the specified result image is not NSFW.
-        /// </summary>
-        /// <param name="resultImage">The result image.</param>
-        /// <param name="config">The configuration.</param>
-        /// <returns>
-        ///   <c>true</c> if the specified result image is safe; otherwise, <c>false</c>.
-        /// </returns>
-        protected async Task<bool> IsImageSafe(SchedulerOptions options, DenseTensor<float> resultImage)
-        {
-            //clip input
-            var inputTensor = ClipImageFeatureExtractor(options, resultImage);
-
-            //images input
-            var inputNames = _onnxModelService.GetInputNames(OnnxModelType.SafetyChecker);
-            var inputImagesTensor = inputTensor.ReorderTensor(new[] { 1, 224, 224, 3 });
-            var inputParameters = CreateInputParameters(
-                NamedOnnxValue.CreateFromTensor(inputNames[0], inputTensor),
-                NamedOnnxValue.CreateFromTensor(inputNames[1], inputImagesTensor));
-
-            // Run session and send the input data in to get inference output. 
-            using (var inferResult = await _onnxModelService.RunInferenceAsync(OnnxModelType.SafetyChecker, inputParameters))
-            {
-                var result = inferResult.LastElementAs<IEnumerable<bool>>();
-                return !result.First();
-            }
-        }
-
-
-        /// <summary>
-        /// Image feature extractor.
-        /// </summary>
-        /// <param name="imageTensor">The image tensor.</param>
-        /// <returns></returns>
-        protected static DenseTensor<float> ClipImageFeatureExtractor(SchedulerOptions options, DenseTensor<float> imageTensor)
-        {
-            //convert tensor result to image
-            using (var image = imageTensor.ToImage())
-            {
-                // Resize image
-                ImageHelpers.Resize(image, new[] { 1, 3, 224, 224 });
-
-                // Preprocess image
-                var input = new DenseTensor<float>(new[] { 1, 3, 224, 224 });
-                var mean = new[] { 0.485f, 0.456f, 0.406f };
-                var stddev = new[] { 0.229f, 0.224f, 0.225f };
-                image.ProcessPixelRows(img =>
-                {
-                    for (int y = 0; y < image.Height; y++)
+                    var inputs = new Dictionary<string, OrtValue> { { inputNames[0], inputTensorValue } };
+                    var outputs = new Dictionary<string, OrtValue> { { outputNames[0], outputTensorValue } };
+                    var results = await _onnxModelService.RunInferenceAsync(model, OnnxModelType.VaeDecoder, inputs, outputs);
+                    using (var imageResult = results.First())
                     {
-                        var pixelSpan = img.GetRowSpan(y);
-                        for (int x = 0; x < image.Width; x++)
-                        {
-                            input[0, 0, y, x] = (pixelSpan[x].R / 255f - mean[0]) / stddev[0];
-                            input[0, 1, y, x] = (pixelSpan[x].G / 255f - mean[1]) / stddev[1];
-                            input[0, 2, y, x] = (pixelSpan[x].B / 255f - mean[2]) / stddev[2];
-                        }
+                        imageTensors.Add(outputBuffer);
                     }
-                });
-                return input;
+                }
             }
+
+            var result = prompt.BatchCount > 1
+                ? imageTensors.Join()
+                : imageTensors.FirstOrDefault();
+            _logger?.LogEnd("End", timestamp);
+            return result;
         }
 
 
         /// <summary>
-        /// Gets the scheduler.
+        /// Creates the timestep OrtValue based on its NodeMetadata type.
         /// </summary>
-        /// <param name="options">The options.</param>
-        /// <param name="schedulerConfig">The scheduler configuration.</param>
+        /// <param name="nodeMetadata">The node metadata.</param>
+        /// <param name="timestepInputName">Name of the timestep input.</param>
+        /// <param name="timestep">The timestep.</param>
         /// <returns></returns>
-        protected static IScheduler GetScheduler(PromptOptions prompt, SchedulerOptions options)
+        protected static OrtValue CreateTimestepNamedOrtValue(IReadOnlyDictionary<string, NodeMetadata> nodeMetadata, string timestepInputName, int timestep)
         {
-            return prompt.SchedulerType switch
-            {
-                SchedulerType.LMS => new LMSScheduler(options),
-                SchedulerType.EulerAncestral => new EulerAncestralScheduler(options),
-                SchedulerType.DDPM => new DDPMScheduler(options),
-                _ => default
-            };
+            // Some models support Long or Float, could be more but fornow just support these 2
+            var timestepMetaData = nodeMetadata[timestepInputName];
+            return timestepMetaData.ElementDataType == TensorElementType.Int64
+                ? OrtValue.CreateTensorValueFromMemory(new long[] { timestep }, new long[] { 1 })
+                : OrtValue.CreateTensorValueFromMemory(new float[] { timestep }, new long[] { 1 });
         }
+
 
         /// <summary>
         /// Helper for creating the input parameters.
         /// </summary>
         /// <param name="parameters">The parameters.</param>
         /// <returns></returns>
-        protected static IReadOnlyCollection<NamedOnnxValue> CreateInputParameters(params NamedOnnxValue[] parameters)
+        protected static IReadOnlyList<NamedOnnxValue> CreateInputParameters(params NamedOnnxValue[] parameters)
         {
-            return parameters.ToList().AsReadOnly();
+            return parameters.ToList();
         }
     }
 }

@@ -6,7 +6,7 @@ namespace OnnxStack.StableDiffusion.Config
 {
     public class PromptOptions
     {
-        public ProcessType ProcessType { get; set; }
+        public DiffuserType DiffuserType { get; set; }
 
         [Required]
         [StringLength(512, MinimumLength = 4)]
@@ -14,7 +14,8 @@ namespace OnnxStack.StableDiffusion.Config
 
         [StringLength(512)]
         public string NegativePrompt { get; set; }
-        public SchedulerType SchedulerType { get; set; }
+
+        public int BatchCount { get; set; } = 1;
 
         public InputImage InputImage { get; set; }
 
@@ -22,12 +23,5 @@ namespace OnnxStack.StableDiffusion.Config
 
         public bool HasInputImage => InputImage?.HasImage ?? false;
         public bool HasInputImageMask => InputImageMask?.HasImage ?? false;
-    }
-
-    public enum ProcessType
-    {
-        TextToImage = 0,
-        ImageToImage = 1,
-        ImageInpaint = 2
     }
 }

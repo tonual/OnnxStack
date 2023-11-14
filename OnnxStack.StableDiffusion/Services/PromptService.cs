@@ -1,21 +1,21 @@
-﻿using Microsoft.ML.OnnxRuntime.Tensors;
-using Microsoft.ML.OnnxRuntime;
-using OnnxStack.Core.Config;
+﻿using Microsoft.ML.OnnxRuntime;
+using Microsoft.ML.OnnxRuntime.Tensors;
 using OnnxStack.Core;
+using OnnxStack.Core.Config;
+using OnnxStack.Core.Services;
+using OnnxStack.StableDiffusion.Common;
+using OnnxStack.StableDiffusion.Config;
 using OnnxStack.StableDiffusion.Helpers;
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
-using OnnxStack.Core.Services;
-using OnnxStack.StableDiffusion.Common;
 
 namespace OnnxStack.StableDiffusion.Services
 {
     public sealed class PromptService : IPromptService
     {
-        private readonly OnnxStackConfig _configuration;
         private readonly IOnnxModelService _onnxModelService;
 
         /// <summary>
@@ -23,9 +23,8 @@ namespace OnnxStack.StableDiffusion.Services
         /// </summary>
         /// <param name="configuration">The configuration.</param>
         /// <param name="onnxModelService">The onnx model service.</param>
-        public PromptService(OnnxStackConfig configuration, IOnnxModelService onnxModelService)
+        public PromptService(IOnnxModelService onnxModelService)
         {
-            _configuration = configuration;
             _onnxModelService = onnxModelService;
         }
 
@@ -36,28 +35,30 @@ namespace OnnxStack.StableDiffusion.Services
         /// <param name="prompt">The prompt.</param>
         /// <param name="negativePrompt">The negative prompt.</param>
         /// <returns>Tensor containing all text embeds generated from the prompt and negative prompt</returns>
-        public async Task<DenseTensor<float>> CreatePromptAsync(string prompt, string negativePrompt)
+        public async Task<DenseTensor<float>> CreatePromptAsync(IModelOptions model, PromptOptions promptOptions, bool isGuidanceEnabled)
         {
             // Tokenize Prompt and NegativePrompt
-            var promptTokens = await DecodeTextAsync(prompt);
-            var negativePromptTokens = await DecodeTextAsync(negativePrompt);
+            var promptTokens = await DecodeTextAsync(model, promptOptions.Prompt);
+            var negativePromptTokens = await DecodeTextAsync(model, promptOptions.NegativePrompt);
             var maxPromptTokenCount = Math.Max(promptTokens.Length, negativePromptTokens.Length);
 
-            Console.WriteLine($"Prompt -   Length: {prompt.Length}, Tokens: {promptTokens.Length}");
-            Console.WriteLine($"N-Prompt - Length: {negativePrompt?.Length}, Tokens: {negativePromptTokens.Length}");
-
             // Generate embeds for tokens
-            var promptEmbeddings = await GenerateEmbedsAsync(promptTokens, maxPromptTokenCount);
-            var negativePromptEmbeddings = await GenerateEmbedsAsync(negativePromptTokens, maxPromptTokenCount);
+            var promptEmbeddings = await GenerateEmbedsAsync(model, promptTokens, maxPromptTokenCount);
+            var negativePromptEmbeddings = await GenerateEmbedsAsync(model, negativePromptTokens, maxPromptTokenCount);
 
-            // Calculate embeddings
-            var textEmbeddings = new DenseTensor<float>(new[] { 2, promptEmbeddings.Count / _configuration.EmbeddingsLength, _configuration.EmbeddingsLength });
-            for (var i = 0; i < promptEmbeddings.Count; i++)
+            // If we have a batch, repeat the prompt embeddings
+            if (promptOptions.BatchCount > 1)
             {
-                textEmbeddings[0, i / _configuration.EmbeddingsLength, i % _configuration.EmbeddingsLength] = negativePromptEmbeddings[i];
-                textEmbeddings[1, i / _configuration.EmbeddingsLength, i % _configuration.EmbeddingsLength] = promptEmbeddings[i];
+                promptEmbeddings = promptEmbeddings.Repeat(promptOptions.BatchCount);
+                negativePromptEmbeddings = negativePromptEmbeddings.Repeat(promptOptions.BatchCount);
             }
-            return textEmbeddings;
+
+            // If we are doing guided diffusion, concatenate the negative prompt embeddings
+            // If not we ingore the negative prompt embeddings
+            if (isGuidanceEnabled)
+                return negativePromptEmbeddings.Concatenate(promptEmbeddings);
+
+            return promptEmbeddings;
         }
 
 
@@ -66,21 +67,24 @@ namespace OnnxStack.StableDiffusion.Services
         /// </summary>
         /// <param name="inputText">The input text.</param>
         /// <returns>Tokens generated for the specified text input</returns>
-        public async Task<int[]> DecodeTextAsync(string inputText)
+        public Task<int[]> DecodeTextAsync(IModelOptions model, string inputText)
         {
             if (string.IsNullOrEmpty(inputText))
-                return Array.Empty<int>();
+                return Task.FromResult(Array.Empty<int>());
 
-            // Create input tensor.
-            var inputNames = _onnxModelService.GetInputNames(OnnxModelType.Tokenizer);
+            var inputNames = _onnxModelService.GetInputNames(model, OnnxModelType.Tokenizer);
+            var outputNames = _onnxModelService.GetOutputNames(model, OnnxModelType.Tokenizer);
             var inputTensor = new DenseTensor<string>(new string[] { inputText }, new int[] { 1 });
-            var inputParameters = CreateInputParameters(NamedOnnxValue.CreateFromTensor("string_input", inputTensor));
-
-            // Run inference.
-            using (var inferResult = await _onnxModelService.RunInferenceAsync(OnnxModelType.Tokenizer, inputParameters))
+            using (var inputTensorValue = OrtValue.CreateFromStringTensor(inputTensor))
             {
-                var resultTensor = inferResult.FirstElementAs<DenseTensor<long>>();
-                return resultTensor.Select(x => (int)x).ToArray();
+                var outputs = new string[] { outputNames[0] };
+                var inputs = new Dictionary<string, OrtValue> { { inputNames[0], inputTensorValue } };
+                var results = _onnxModelService.RunInference(model, OnnxModelType.Tokenizer, inputs, outputs);
+                using (var result = results.First())
+                {
+                    var resultData = result.GetTensorDataAsSpan<long>().ToArray();
+                    return Task.FromResult(Array.ConvertAll(resultData, Convert.ToInt32));
+                }
             }
         }
 
@@ -90,18 +94,25 @@ namespace OnnxStack.StableDiffusion.Services
         /// </summary>
         /// <param name="tokenizedInput">The tokenized input.</param>
         /// <returns></returns>
-        public async Task<float[]> EncodeTokensAsync(int[] tokenizedInput)
+        public async Task<float[]> EncodeTokensAsync(IModelOptions model, int[] tokenizedInput)
         {
             // Create input tensor.
-            var inputNames = _onnxModelService.GetInputNames(OnnxModelType.TextEncoder);
-            var inputTensor = TensorHelper.CreateTensor(tokenizedInput, new[] { 1, tokenizedInput.Length });
-            var inputParameters = CreateInputParameters(NamedOnnxValue.CreateFromTensor("input_ids", inputTensor));
+            var inputNames = _onnxModelService.GetInputNames(model, OnnxModelType.TextEncoder);
+            var outputNames = _onnxModelService.GetOutputNames(model, OnnxModelType.TextEncoder);
 
-            // Run inference.
-            using (var inferResult = await _onnxModelService.RunInferenceAsync(OnnxModelType.TextEncoder, inputParameters))
+            var inputDim = new[] { 1L, tokenizedInput.Length };
+            var outputDim = new[] { 1L, tokenizedInput.Length, model.EmbeddingsLength };
+            var outputBuffer = new float[outputDim.GetBufferLength()];
+            using (var inputTensorValue = OrtValue.CreateTensorValueFromMemory(tokenizedInput, inputDim))
+            using (var outputTensorValue = OrtValue.CreateTensorValueFromMemory(outputBuffer, outputDim))
             {
-                var resultTensor = inferResult.FirstElementAs<DenseTensor<float>>();
-                return resultTensor.ToArray();
+                var inputs = new Dictionary<string, OrtValue> { { inputNames[0], inputTensorValue } };
+                var outputs = new Dictionary<string, OrtValue> { { outputNames[0], outputTensorValue } };
+                var results = await _onnxModelService.RunInferenceAsync(model, OnnxModelType.TextEncoder, inputs, outputs);
+                using (var result = results.First())
+                {
+                    return outputBuffer;
+                }
             }
         }
 
@@ -112,20 +123,22 @@ namespace OnnxStack.StableDiffusion.Services
         /// <param name="inputTokens">The input tokens.</param>
         /// <param name="minimumLength">The minimum length.</param>
         /// <returns></returns>
-        private async Task<List<float>> GenerateEmbedsAsync(int[] inputTokens, int minimumLength)
+        private async Task<DenseTensor<float>> GenerateEmbedsAsync(IModelOptions model, int[] inputTokens, int minimumLength)
         {
             // If less than minimumLength pad with blank tokens
             if (inputTokens.Length < minimumLength)
-                inputTokens = PadWithBlankTokens(inputTokens, minimumLength).ToArray();
+                inputTokens = PadWithBlankTokens(inputTokens, minimumLength, model.BlankTokenValueArray).ToArray();
 
             // The CLIP tokenizer only supports 77 tokens, batch process in groups of 77 and concatenate
             var embeddings = new List<float>();
-            foreach (var tokenBatch in inputTokens.Batch(_configuration.TokenizerLimit))
+            foreach (var tokenBatch in inputTokens.Batch(model.TokenizerLimit))
             {
-                var tokens = PadWithBlankTokens(tokenBatch, _configuration.TokenizerLimit);
-                embeddings.AddRange(await EncodeTokensAsync(tokens.ToArray()));
+                var tokens = PadWithBlankTokens(tokenBatch, model.TokenizerLimit, model.BlankTokenValueArray);
+                embeddings.AddRange(await EncodeTokensAsync(model, tokens.ToArray()));
             }
-            return embeddings;
+
+            var dim = new[] { 1, embeddings.Count / model.EmbeddingsLength, model.EmbeddingsLength };
+            return TensorHelper.CreateTensor(embeddings.ToArray(), dim);
         }
 
 
@@ -135,11 +148,11 @@ namespace OnnxStack.StableDiffusion.Services
         /// <param name="inputs">The inputs.</param>
         /// <param name="requiredLength">The the required length of the returned array.</param>
         /// <returns></returns>
-        private IEnumerable<int> PadWithBlankTokens(IEnumerable<int> inputs, int requiredLength)
+        private IEnumerable<int> PadWithBlankTokens(IEnumerable<int> inputs, int requiredLength, ImmutableArray<int> blankTokens)
         {
             var count = inputs.Count();
             if (requiredLength > count)
-                return inputs.Concat(_configuration.BlankTokenValueArray[..(requiredLength - count)]);
+                return inputs.Concat(blankTokens[..(requiredLength - count)]);
             return inputs;
         }
 

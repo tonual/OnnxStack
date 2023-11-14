@@ -14,15 +14,15 @@ namespace OnnxStack.WebUI.Models
             OutputImageUrl = outputImageUrl;
             Prompt = prompt.Prompt;
             NegativePrompt = prompt.NegativePrompt;
-            SchedulerType = prompt.SchedulerType;
-            ProcessType = prompt.ProcessType;
+            SchedulerType = options.SchedulerType;
+            DiffuserType = prompt.DiffuserType;
         }
 
         public DateTime Timestamp { get; }
         public string Prompt { get; }
         public string NegativePrompt { get; }
         public SchedulerType SchedulerType { get; }
-        public ProcessType ProcessType { get; }
+        public DiffuserType DiffuserType { get; }
         public string MaskImageUrl { get; }
         public string InputImageUrl { get; }
         public string OutputImageUrl { get; }

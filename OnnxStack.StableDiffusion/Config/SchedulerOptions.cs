@@ -4,8 +4,13 @@ using System.ComponentModel.DataAnnotations;
 
 namespace OnnxStack.StableDiffusion.Config
 {
-    public class SchedulerOptions
+    public record SchedulerOptions
     {
+        /// <summary>
+        /// Gets or sets the type of scheduler.
+        /// </summary>
+        public SchedulerType SchedulerType { get; set; }
+
         /// <summary>
         /// Gets or sets the height.
         /// </summary>
@@ -40,7 +45,7 @@ namespace OnnxStack.StableDiffusion.Config
         /// The number of steps to run inference for. The more steps the longer it will take to run the inference loop but the image quality should improve.
         /// </value>
         [Range(5, 200)]
-        public int InferenceSteps { get; set; } = 15;
+        public int InferenceSteps { get; set; } = 30;
 
         /// <summary>
         /// Gets or sets the guidance scale.
@@ -48,7 +53,7 @@ namespace OnnxStack.StableDiffusion.Config
         /// <value>
         /// The scale for the classifier-free guidance. The higher the number the more it will try to look like the prompt but the image quality may suffer.
         /// </value>
-        [Range(0f, 40f)]
+        [Range(0f, 30f)]
         public float GuidanceScale { get; set; } = 7.5f;
 
         /// <summary>
@@ -80,6 +85,6 @@ namespace OnnxStack.StableDiffusion.Config
         public AlphaTransformType AlphaTransformType { get; set; } = AlphaTransformType.Cosine;
         public float MaximumBeta { get; set; } = 0.999f;
 
-
+        public int OriginalInferenceSteps { get; set; } = 50;
     }
 }

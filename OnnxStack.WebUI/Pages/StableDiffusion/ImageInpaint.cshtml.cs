@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using Models;
 using OnnxStack.Core;
 using OnnxStack.StableDiffusion.Config;
+using OnnxStack.StableDiffusion.Enums;
 using Services;
 
 namespace OnnxStack.WebUI.Pages.StableDiffusion
@@ -38,12 +39,13 @@ namespace OnnxStack.WebUI.Pages.StableDiffusion
 
             Prompt = new PromptOptions
             {
-              //  Prompt = "A photo of a cat",
+
             };
 
             Options = new SchedulerOptions
             {
-              //  InferenceSteps = 5,
+                SchedulerType = SchedulerType.DDPM,
+                Strength = 1.0f,
             };
         }
     }

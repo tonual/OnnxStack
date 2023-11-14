@@ -1,8 +1,11 @@
 ﻿using Microsoft.ML.OnnxRuntime;
+using Microsoft.ML.OnnxRuntime.Tensors;
 using OnnxStack.Core.Config;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 
 namespace OnnxStack.Core
 {
@@ -12,16 +15,16 @@ namespace OnnxStack.Core
         {
             var sessionOptions = new SessionOptions
             {
-                ExecutionMode = configuration.ExecutionMode,
-                InterOpNumThreads = configuration.InterOpNumThreads,
-                IntraOpNumThreads = configuration.InterOpNumThreads
+                ExecutionMode = configuration.ExecutionMode.Value,
+                InterOpNumThreads = configuration.InterOpNumThreads.Value,
+                IntraOpNumThreads = configuration.IntraOpNumThreads.Value
             };
             switch (configuration.ExecutionProvider)
             {
                 case ExecutionProvider.DirectML:
                     sessionOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
                     sessionOptions.EnableMemoryPattern = false;
-                    sessionOptions.AppendExecutionProvider_DML(configuration.DeviceId);
+                    sessionOptions.AppendExecutionProvider_DML(configuration.DeviceId.Value);
                     sessionOptions.AppendExecutionProvider_CPU();
                     return sessionOptions;
                 case ExecutionProvider.CoreML:
@@ -35,10 +38,28 @@ namespace OnnxStack.Core
                 default:
                 case ExecutionProvider.Cuda:
                     sessionOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
-                    sessionOptions.AppendExecutionProvider_CUDA(configuration.DeviceId);
+                    sessionOptions.AppendExecutionProvider_CUDA(configuration.DeviceId.Value);
                     sessionOptions.AppendExecutionProvider_CPU();
                     return sessionOptions;
                 
+            }
+        }
+
+        /// <summary>
+        /// Applies the configuration overrides.
+        /// </summary>
+        public static void ApplyConfigurationOverrides(this IOnnxModelSetConfig innxModelSetConfig)
+        {
+            if (innxModelSetConfig.ModelConfigurations.IsNullOrEmpty())
+                return;
+
+            foreach (var modelConfig in innxModelSetConfig.ModelConfigurations)
+            {
+                modelConfig.DeviceId ??= innxModelSetConfig.DeviceId;
+                modelConfig.ExecutionMode ??= innxModelSetConfig.ExecutionMode;
+                modelConfig.InterOpNumThreads ??= innxModelSetConfig.InterOpNumThreads;
+                modelConfig.IntraOpNumThreads ??= innxModelSetConfig.IntraOpNumThreads;
+                modelConfig.ExecutionProvider ??= innxModelSetConfig.ExecutionProvider;
             }
         }
 
@@ -139,6 +160,72 @@ namespace OnnxStack.Core
             return -1;
         }
 
+
+        /// <summary>
+        /// Converts to source IEnumerable to a ConcurrentDictionary.
+        /// </summary>
+        /// <param name="source">The source.</param>
+        /// <param name="keySelector">The key selector.</param>
+        /// <param name="elementSelector">The element selector.</param>
+        /// <returns></returns>
+        public static ConcurrentDictionary<T, U> ToConcurrentDictionary<S, T, U>(this IEnumerable<S> source, Func<S, T> keySelector, Func<S, U> elementSelector) where T : notnull
+        {
+            return new ConcurrentDictionary<T, U>(source.ToDictionary(keySelector, elementSelector));
+        }
+
+
+        /// <summary>
+        /// Gets the full prod of a dimension
+        /// </summary>
+        /// <param name="array">The dimension array.</param>
+        /// <returns></returns>
+        public static T GetBufferLength<T>(this T[] array) where T : INumber<T>
+        {
+            T result = T.One;
+            foreach (T element in array)
+            {
+                result *= element;
+            }
+            return result;
+        }
+
+
+        /// <summary>
+        /// Gets the full prod of a dimension
+        /// </summary>
+        /// <param name="array">The dimension array.</param>
+        /// <returns></returns>
+        public static T GetBufferLength<T>(this ReadOnlySpan<T> array) where T : INumber<T>
+        {
+            T result = T.One;
+            foreach (T element in array)
+            {
+                result *= element;
+            }
+            return result;
+        }
+
+
+        public static long[] ToLong(this ReadOnlySpan<int> array)
+        {
+            return Array.ConvertAll(array.ToArray(), Convert.ToInt64);
+        }
+    
+        public static int[] ToInt(this long[] array)
+        {
+            return Array.ConvertAll(array, Convert.ToInt32);
+        }
+
+        public static long[] ToLong(this int[] array)
+        {
+            return Array.ConvertAll(array, Convert.ToInt64);
+        }
+
+
+        public static OrtValue ToOrtValue<T>(this DenseTensor<T> tensor) where T : unmanaged
+        {
+            return OrtValue.CreateTensorValueFromMemory(OrtMemoryInfo.DefaultInstance, tensor.Buffer, tensor.Dimensions.ToLong());
+        }
 
     }
 }

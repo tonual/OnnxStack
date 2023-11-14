@@ -1,7 +1,6 @@
-﻿using OnnxStack.Core;
+﻿using OnnxStack.StableDiffusion;
 using OnnxStack.StableDiffusion.Common;
 using OnnxStack.StableDiffusion.Config;
-using OnnxStack.StableDiffusion.Enums;
 using SixLabors.ImageSharp;
 
 namespace OnnxStack.Console.Runner
@@ -40,32 +39,41 @@ namespace OnnxStack.Console.Runner
                 {
                     Prompt = prompt,
                     NegativePrompt = negativePrompt,
-                   
+
                 };
 
                 var schedulerOptions = new SchedulerOptions
                 {
                     Seed = Random.Shared.Next()
                 };
-                foreach (var schedulerType in Enum.GetValues<SchedulerType>())
-                {
-                    promptOptions.SchedulerType = schedulerType;
 
-                    OutputHelpers.WriteConsole("Generating Image...", ConsoleColor.Green);
-                    await GenerateImage(promptOptions, schedulerOptions);
+                foreach (var model in _stableDiffusionService.Models)
+                {
+                    OutputHelpers.WriteConsole($"Loading Model `{model.Name}`...", ConsoleColor.Green);
+                    await _stableDiffusionService.LoadModel(model);
+
+                    foreach (var schedulerType in model.PipelineType.GetSchedulerTypes())
+                    {
+                        schedulerOptions.SchedulerType = schedulerType;
+                        OutputHelpers.WriteConsole($"Generating {schedulerType} Image...", ConsoleColor.Green);
+                        await GenerateImage(model, promptOptions, schedulerOptions);
+                    }
+
+                    OutputHelpers.WriteConsole($"Unloading Model `{model.Name}`...", ConsoleColor.Green);
+                    await _stableDiffusionService.UnloadModel(model);
                 }
             }
         }
 
-        private async Task<bool> GenerateImage(PromptOptions prompt, SchedulerOptions options)
+        private async Task<bool> GenerateImage(ModelOptions model, PromptOptions prompt, SchedulerOptions options)
         {
-            var outputFilename = Path.Combine(_outputDirectory, $"{options.Seed}_{prompt.SchedulerType}.png");
-            var result = await _stableDiffusionService.GenerateAsImageAsync(prompt, options);
+            var outputFilename = Path.Combine(_outputDirectory, $"{options.Seed}_{options.SchedulerType}.png");
+            var result = await _stableDiffusionService.GenerateAsImageAsync(model, prompt, options);
             if (result == null)
                 return false;
 
             await result.SaveAsPngAsync(outputFilename);
-            OutputHelpers.WriteConsole($"{prompt.SchedulerType} Image Created: {Path.GetFileName(outputFilename)}", ConsoleColor.Green);
+            OutputHelpers.WriteConsole($"{options.SchedulerType} Image Created: {Path.GetFileName(outputFilename)}", ConsoleColor.Green);
             return true;
         }
     }

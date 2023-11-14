@@ -7,10 +7,22 @@ namespace OnnxStack.StableDiffusion.Enums
         [Display(Name = "LMS")]
         LMS = 0,
 
+        [Display(Name = "Euler")]
+        Euler = 1,
+
         [Display(Name = "Euler Ancestral")]
-        EulerAncestral = 1,
+        EulerAncestral = 2,
 
         [Display(Name = "DDPM")]
-        DDPM = 3
+        DDPM = 3,
+
+        [Display(Name = "DDIM")]
+        DDIM = 4,
+
+        [Display(Name = "KDPM2")]
+        KDPM2 = 5,
+
+         [Display(Name = "LCM")]
+        LCM = 20
     }
 }

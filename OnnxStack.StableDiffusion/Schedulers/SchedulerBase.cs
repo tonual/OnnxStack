@@ -1,4 +1,5 @@
 ﻿using Microsoft.ML.OnnxRuntime.Tensors;
+using NumSharp;
 using OnnxStack.StableDiffusion.Common;
 using OnnxStack.StableDiffusion.Config;
 using OnnxStack.StableDiffusion.Enums;
@@ -50,6 +51,11 @@ namespace OnnxStack.StableDiffusion.Schedulers
         public IReadOnlyList<int> Timesteps => _timesteps;
 
         /// <summary>
+        /// Gets the compatible pipeline.
+        /// </summary>
+        public virtual DiffuserPipelineType PipelineType => DiffuserPipelineType.StableDiffusion;
+
+        /// <summary>
         /// Scales the input.
         /// </summary>
         /// <param name="sample">The sample.</param>
@@ -65,7 +71,7 @@ namespace OnnxStack.StableDiffusion.Schedulers
         /// <param name="sample">The sample.</param>
         /// <param name="order">The order.</param>
         /// <returns></returns>
-        public abstract DenseTensor<float> Step(DenseTensor<float> modelOutput, int timestep, DenseTensor<float> sample, int order = 4);
+        public abstract SchedulerStepResult Step(DenseTensor<float> modelOutput, int timestep, DenseTensor<float> sample, int order = 4);
 
 
         /// <summary>
@@ -101,6 +107,121 @@ namespace OnnxStack.StableDiffusion.Schedulers
 
 
         /// <summary>
+        /// Gets the beta schedule.
+        /// </summary>
+        /// <returns></returns>
+        protected virtual float[] GetBetaSchedule()
+        {
+            var betas = Enumerable.Empty<float>();
+            if (Options.TrainedBetas != null)
+            {
+                betas = Options.TrainedBetas;
+            }
+            else if (Options.BetaSchedule == BetaScheduleType.Linear)
+            {
+                betas = np.linspace(Options.BetaStart, Options.BetaEnd, Options.TrainTimesteps).ToArray<float>();
+            }
+            else if (Options.BetaSchedule == BetaScheduleType.ScaledLinear)
+            {
+                var start = (float)Math.Sqrt(Options.BetaStart);
+                var end = (float)Math.Sqrt(Options.BetaEnd);
+                betas = np.linspace(start, end, Options.TrainTimesteps)
+                    .ToArray<float>()
+                    .Select(x => x * x);
+            }
+            else if (Options.BetaSchedule == BetaScheduleType.SquaredCosCapV2)
+            {
+                betas = GetBetasForAlphaBar();
+            }
+            else if (Options.BetaSchedule == BetaScheduleType.Sigmoid)
+            {
+                var mul = Options.BetaEnd - Options.BetaStart;
+                var betaSig = np.linspace(-6f, 6f, Options.TrainTimesteps).ToArray<float>();
+                var sigmoidBetas = betaSig
+                    .Select(beta => 1.0f / (1.0f + (float)Math.Exp(-beta)))
+                    .ToArray();
+                betas = sigmoidBetas
+                    .Select(x => (x * mul) + Options.BetaStart)
+                    .ToArray();
+            }
+            return betas.ToArray();
+        }
+
+
+        /// <summary>
+        /// Gets the initial noise sigma.
+        /// </summary>
+        /// <param name="sigmas">The sigmas.</param>
+        /// <returns></returns>
+        protected virtual float GetInitNoiseSigma(float[] sigmas)
+        {
+            var maxSigma = sigmas.Max();
+            return Options.TimestepSpacing == TimestepSpacingType.Linspace
+                || Options.TimestepSpacing == TimestepSpacingType.Trailing
+                ? maxSigma : (float)Math.Sqrt(maxSigma * maxSigma + 1);
+        }
+
+
+        /// <summary>
+        /// Gets the timesteps.
+        /// </summary>
+        /// <returns></returns>
+        protected virtual float[] GetTimesteps()
+        {
+            NDArray timestepsArray = null;
+            if (Options.TimestepSpacing == TimestepSpacingType.Linspace)
+            {
+                timestepsArray = np.linspace(0, Options.TrainTimesteps - 1, Options.InferenceSteps);
+                timestepsArray = np.around(timestepsArray)["::1"];
+            }
+            else if (Options.TimestepSpacing == TimestepSpacingType.Leading)
+            {
+                var stepRatio = Options.TrainTimesteps / Options.InferenceSteps;
+                timestepsArray = np.arange(0, (float)Options.InferenceSteps) * stepRatio;
+                timestepsArray = np.around(timestepsArray)["::1"];
+                timestepsArray += Options.StepsOffset;
+            }
+            else if (Options.TimestepSpacing == TimestepSpacingType.Trailing)
+            {
+                var stepRatio = Options.TrainTimesteps / (Options.InferenceSteps - 1);
+                timestepsArray = np.arange((float)Options.TrainTimesteps, 0, -stepRatio)["::-1"];
+                timestepsArray = np.around(timestepsArray);
+                timestepsArray -= 1;
+            }
+
+            return timestepsArray.ToArray<float>();
+        }
+
+
+        /// <summary>
+        /// Gets the predicted sample.
+        /// </summary>
+        /// <param name="modelOutput">The model output.</param>
+        /// <param name="sample">The sample.</param>
+        /// <param name="sigma">The sigma.</param>
+        /// <returns></returns>
+        protected virtual DenseTensor<float> GetPredictedSample(DenseTensor<float> modelOutput, DenseTensor<float> sample, float sigma)
+        {
+            DenseTensor<float> predOriginalSample = null;
+            if (Options.PredictionType == PredictionType.Epsilon)
+            {
+                predOriginalSample = sample.SubtractTensors(modelOutput.MultipleTensorByFloat(sigma));
+            }
+            else if (Options.PredictionType == PredictionType.VariablePrediction)
+            {
+                var sigmaSqrt = (float)Math.Sqrt(sigma * sigma + 1);
+                predOriginalSample = sample.DivideTensorByFloat(sigmaSqrt)
+                    .AddTensors(modelOutput.MultipleTensorByFloat(-sigma / sigmaSqrt));
+            }
+            else if (Options.PredictionType == PredictionType.Sample)
+            {
+                //prediction_type not implemented yet: sample
+                predOriginalSample = sample.ToDenseTensor();
+            }
+            return predOriginalSample;
+        }
+
+        /// <summary>
         /// Sets the initial noise sigma.
         /// </summary>
         /// <param name="initNoiseSigma">The initial noise sigma.</param>
@@ -129,28 +250,24 @@ namespace OnnxStack.StableDiffusion.Schedulers
         /// <returns></returns>
         protected float[] GetBetasForAlphaBar()
         {
-            var betas = new float[_options.TrainTimesteps];
-
             Func<float, float> alphaBarFn = null;
             if (_options.AlphaTransformType == AlphaTransformType.Cosine)
             {
-                alphaBarFn = t => (float)Math.Pow(Math.Cos((t + 0.008) / 1.008 * Math.PI / 2.0), 2.0);
+                alphaBarFn = t => (float)Math.Pow(Math.Cos((t + 0.008f) / 1.008f * Math.PI / 2.0f), 2.0f);
             }
             else if (_options.AlphaTransformType == AlphaTransformType.Exponential)
             {
-                alphaBarFn = t => (float)Math.Exp(t * -12.0);
+                alphaBarFn = t => (float)Math.Exp(t * -12.0f);
             }
 
-            for (int i = 0; i < _options.TrainTimesteps; i++)
-            {
-                float t1 = (float)i / _options.TrainTimesteps;
-                float t2 = (float)(i + 1) / _options.TrainTimesteps;
-                float alphaT1 = alphaBarFn(t1);
-                float alphaT2 = alphaBarFn(t2);
-                float beta = Math.Min(1 - alphaT2 / alphaT1, _options.MaximumBeta);
-                betas[i] = (float)Math.Max(beta, 0.0001);
-            }
-            return betas;
+            return Enumerable
+                .Range(0, _options.TrainTimesteps)
+                .Select(i =>
+                {
+                    var t1 = (float)i / _options.TrainTimesteps;
+                    var t2 = (float)(i + 1) / _options.TrainTimesteps;
+                    return Math.Min(1f - alphaBarFn(t2) / alphaBarFn(t1), _options.MaximumBeta);
+                }).ToArray();
         }
 
 
@@ -164,7 +281,7 @@ namespace OnnxStack.StableDiffusion.Schedulers
         protected float[] Interpolate(float[] timesteps, float[] range, float[] sigmas)
         {
             // Create an output array with the same shape as timesteps
-            var result = new float[timesteps.Length + 1];
+            var result = new float[timesteps.Length];
 
             // Loop over each element of timesteps
             for (int i = 0; i < timesteps.Length; i++)

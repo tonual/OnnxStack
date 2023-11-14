@@ -217,6 +217,7 @@ const stableDiffusionImageInpaint = () => {
         if (outputImageUrl) {
             addInputResult(getWidth(), getHeight(), inputResultTemplate, { imageUrl: outputImageUrl });
             buttonExecute.removeAttr("disabled");
+            mask_init();
         }
     });
 
@@ -320,7 +321,7 @@ const stableDiffusionImageInpaint = () => {
 
 
     // Map UI Events/Functions
-    $(".image2image-control").hide();
+    //$(".image2image-control").hide();
     buttonCancel.on("click", cancelDiffusion);
     buttonClear.on("click", clearHistory);
     buttonExecute.on("click", async () => { await executeDiffusion(); });

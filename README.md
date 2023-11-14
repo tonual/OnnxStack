@@ -8,6 +8,10 @@
 ![Nuget](https://img.shields.io/nuget/dt/OnnxStack.Core)
 [![StableDiffusion Badge](https://img.shields.io/nuget/v/OnnxStack.StableDiffusion?color=4bc51e&label=OnnxStack.StableDiffusion)](https://www.nuget.org/packages/OnnxStack.StableDiffusion)
 ![Nuget](https://img.shields.io/nuget/dt/OnnxStack.StableDiffusion)
+[![Discord](https://img.shields.io/discord/1170119641545314375?label=Discord&)](https://discord.gg/YmUpFaaFsf)
+[![YouTube Channel Views](https://img.shields.io/youtube/channel/views/UCaWjlIC2uz8hDIZCBXjyDRw)](https://www.youtube.com/@OnnxStack)
+
+
 
 
 
@@ -42,7 +46,7 @@ painting, drawing, sketches, monochrome, grayscale, illustration, anime, cartoon
 ### **Schedulers**
 
 Many different scheduler algorithms can be used for this computation, each having its pro- and cons. 
-So far `OnnxStack.StableDiffusion` as included `LMS Discrete`, `Euler Ancestral` and `DDPM` options with more in the works.
+So far `OnnxStack.StableDiffusion` as included `LMS Discrete`, `Euler Ancestral`, `DDPM`, `DDIM`, and `KDPM2` options with more in the works.
 
 *Example:*
 | LMS Scheduler | Euler Ancestral Scheduler | DDPM Scheduler |
@@ -68,6 +72,22 @@ Image To Image Stable Diffusion is an advanced image processing and generation m
 ```
    Prompt: Dog wearing storm trooper helmet, head shot
 ```
+
+### **Image Inpainting**
+Image inpainting is an image modification/restoration technique that intelligently fills in missing or damaged portions of an image while maintaining visual consistency. It's used for tasks like photo restoration and object removal, creating seamless and convincing results.
+
+In the below example we use a simple mask image + prompt to add a rider to the horse
+The black part of the mask will be used buy the process to generate new content, in this case the rider
+
+| Input Image | Mask Image | Masked Image | Result
+| :--- | :--- | :--- | :--- |
+<img src="Assets/Samples/Inpaint-Original.png" width="256" alt="Image of browser inferencing on sample images."/> | <img src="Assets/Samples/Inpaint-Mask.png" width="256"  alt="Image of browser inferencing on sample images."/> |<img src="Assets/Samples/Inpaint-MaskedImage.PNG" width="256"  alt="Image of browser inferencing on sample images."/> |<img src="Assets/Samples/Inpaint-Result.png" width="256"  alt="Image of browser inferencing on sample images."/> |
+
+```
+   Prompt: Rider on horse
+```
+
+
 
 More information and Examples can be found in the `OnnxStack.StableDiffusion` project **[README](OnnxStack.StableDiffusion/README.md)**
 
@@ -114,6 +134,19 @@ Clone the model repo:
 git lfs install
 git clone https://huggingface.co/runwayml/stable-diffusion-v1-5 -b onnx
 ```
+
+
+## Stable Diffusion Models We've Converted To ONNX And Tested
+The following are othe stable diffusion models we've converted to ONNX and tested with OnnxStack.
+
+- [OpenJourney V4](https://huggingface.co/TheyCallMeHex/OpenJourney-V4-ONNX)
+- [DreamLike PhotoReal 2.0](https://huggingface.co/TheyCallMeHex/DreamLike-PhotoReal-2.0-ONNX)
+- [CyberPunk Anime Diffusion](https://huggingface.co/TheyCallMeHex/Cyberpunk-Anime-Diffusion-ONNX)
+- [InkPunk Diffusion](https://huggingface.co/TheyCallMeHex/Inkpunk-Diffusion-ONNX)
+- [Mo-Di Diffusion](https://huggingface.co/TheyCallMeHex/Mo-Di-Diffusion-ONNX)
+- [epiCRealism](https://huggingface.co/TheyCallMeHex/epiCRealism-ONNX)
+- [Comic Diffusion](https://huggingface.co/TheyCallMeHex/Comic-Diffusion-ONNX)
+- [Redshift Diffusion](https://huggingface.co/TheyCallMeHex/Redshift-Diffusion-ONNX)
 
 
 ## Hardware Requirements
