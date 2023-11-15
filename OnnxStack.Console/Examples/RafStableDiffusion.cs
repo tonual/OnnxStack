@@ -1,4 +1,5 @@
-﻿using MathNet.Numerics;
+﻿using System.ComponentModel.DataAnnotations;
+using MathNet.Numerics;
 using OnnxStack.StableDiffusion;
 using OnnxStack.StableDiffusion.Common;
 using OnnxStack.StableDiffusion.Config;
@@ -22,22 +23,28 @@ namespace OnnxStack.Console.Runner
 
         public string Name => "Raf SD fixture";
         public string Description => "creates a series of diffusions from image input";
-        
+
         public async Task RunAsync()
         {
             Directory.CreateDirectory(_outputDirectory);
-            
-            var prompt = "Transdimensional travel, multiverse, transcendent travel";           
+
+            var model = _stableDiffusionService.Models[0];
+
+            var prompts = new List<string> {
+                "Transdimensional travel, multiverse, transcendent travel",
+                "Transdimensional travel, multiverse, transcendent travel, galaxies cluster",
+                "Transdimensional travel, multiverse, transcendent travel, faster then  light"
+            };
+
             var negativePrompt = "cartoon, low contrast, noisy, low quality";
             var inputImg = "IMG_4198.jpg";
-        
+
             var promptOptions = new PromptOptions
             {
-                Prompt = prompt,
                 NegativePrompt = negativePrompt,
                 DiffuserType = StableDiffusion.Enums.DiffuserType.ImageToImage,
                 InputImage = new InputImage(
-                    File.ReadAllBytes(Path.Combine(_inputDirectory,inputImg))
+                    File.ReadAllBytes(Path.Combine(_inputDirectory, inputImg))
                 )
             };
 
@@ -50,23 +57,25 @@ namespace OnnxStack.Console.Runner
                 GuidanceScale = 6,
                 Strength = 0.5f
             };
-            
-            var x = _stableDiffusionService.Models;
-            
-            foreach (var model in _stableDiffusionService.Models)
+
+            foreach (string prompt in prompts)
             {
-                OutputHelpers.WriteConsole($"Loading Model `{model.Name}`...", ConsoleColor.Green);
-                await _stableDiffusionService.LoadModel(model);                                    
-                await GenerateImage(model, promptOptions, schedulerOptions);                
+                promptOptions.Prompt = prompt;
+                var idx = prompts.IndexOf(prompt);
+
+                OutputHelpers.WriteConsole($"prompt `{prompt}`...", ConsoleColor.Green);                
+                await _stableDiffusionService.LoadModel(model);
+                await GenerateImage(model, promptOptions, schedulerOptions, idx);
                 OutputHelpers.WriteConsole($"Unloading Model `{model.Name}`...", ConsoleColor.Green);
                 await _stableDiffusionService.UnloadModel(model);
             }
         }
 
-        private async Task<bool> GenerateImage(ModelOptions model, PromptOptions prompt, SchedulerOptions options)
+        private async Task<bool> GenerateImage(ModelOptions model, PromptOptions prompt, SchedulerOptions options, int idx)
         {
-            var outputFilename = Path.Combine(_outputDirectory, $"{DateTime.Now.Ticks}_{options.SchedulerType}.png");
+            var outputFilename = Path.Combine(_outputDirectory, $"{DateTime.Now.Ticks}_idx{idx}_{options.SchedulerType}.png");
             var result = await _stableDiffusionService.GenerateAsImageAsync(model, prompt, options);
+
             if (result == null)
                 return false;
 
