@@ -28,7 +28,7 @@ namespace OnnxStack.Console.Runner
         {
             Directory.CreateDirectory(_outputDirectory);
 
-            var model = _stableDiffusionService.Models[0];
+            var model = _stableDiffusionService.Models[1];
 
             var prompts = new List<string> {
                 "Transdimensional travel, multiverse, transcendent travel",
