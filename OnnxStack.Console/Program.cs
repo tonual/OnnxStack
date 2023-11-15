@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using OnnxStack.Console.Runner;
 using OnnxStack.Core;
 using System.Reflection;
 
@@ -20,21 +21,10 @@ namespace OnnxStack.Console
 
             // Add AppService
             builder.Services.AddHostedService<AppService>();
-
-            // Add Runners
-            var exampleRunners = Assembly.GetExecutingAssembly()
-                .GetTypes()
-                .Where(type => typeof(IExampleRunner).IsAssignableFrom(type) && !type.IsInterface)
-                .ToList();
-            builder.Services.AddSingleton(exampleRunners.AsEnumerable());
-            foreach (var exampleRunner in exampleRunners)
-            {
-                builder.Services.AddSingleton(exampleRunner);
-            }
-
+            
+            builder.Services.AddSingleton<IExampleRunner, RafStableDiffusion>();
             // Start
             await builder.Build().RunAsync();
         }
-
     }
 }
